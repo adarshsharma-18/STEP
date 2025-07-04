@@ -139,7 +139,6 @@ ORDER BY
     
 #h3
 #c1
-DROP PROCEDURE IF EXISTS BookMovieTicket1;
 
 DELIMITER $$
 
@@ -234,27 +233,118 @@ WHERE show_id = 1 ;
 
 #c2
 DELIMITER $$
-
-CREATE FUNCTION CalculateLoyaltyPoints(
-    p_booking_id INT
-) RETURNS INT
+CREATE FUNCTION CalculateLoyaltyPoints(p_booking_id INT)
+RETURNS INT
 DETERMINISTIC
 BEGIN
-    DECLARE v_total_cost DECIMAL(10, 2);
+    DECLARE v_total_cost DECIMAL(10,2);
     DECLARE v_loyalty_points INT;
-
+    
     -- Retrieve the total cost of the booking
-    SELECT total_cost INTO v_total_cost
+    SELECT total_cost 
+    INTO v_total_cost
     FROM Booking
     WHERE booking_id = p_booking_id;
-
+    
     -- Calculate loyalty points (1 point per 100 INR)
     SET v_loyalty_points = FLOOR(v_total_cost / 100);
-
+    
+    -- Return the points earned
     RETURN v_loyalty_points;
 END $$
-
 DELIMITER ;
 
+
 select * from Booking;
-CalculateLoyaltyPoints{
+SELECT CalculateLoyaltyPoints(4) AS LoyaltyPoints;
+
+#c3
+desc membership;
+
+DELIMITER $$
+CREATE TRIGGER AfterPaymentSuccess
+AFTER INSERT ON Payment
+FOR EACH ROW
+BEGIN
+    DECLARE v_loyalty_points INT;
+    DECLARE v_user_id INT;
+
+    -- Check if the payment status is 'Success'
+    IF NEW.status = 'Success' THEN
+        -- Get the user_id from the Booking table
+        SELECT user_id 
+        INTO v_user_id
+        FROM Booking
+        WHERE booking_id = NEW.booking_id;
+        -- Calculate loyalty points using the function
+        SET v_loyalty_points = CalculateLoyaltyPoints(NEW.booking_id);
+        -- Update the Membership table by adding the points
+        UPDATE Membership
+        SET current_points = current_points + v_loyalty_points
+        WHERE user_id = v_user_id;
+        
+    END IF;
+END $$
+DELIMITER ;
+
+INSERT INTO Payment (booking_id, gateway_id, transaction_amount, transaction_datetime, status)
+VALUES (4, 1, 750.00, NOW(), 'Success');
+SELECT * FROM Membership;
+SELECT * FROM Membership WHERE user_id = (SELECT user_id FROM Booking WHERE booking_id = 4);
+
+#M1
+SELECT m.movie_id, m.title, SUM(b.total_cost) AS total_revenue
+FROM Booking b
+JOIN Show1 sh ON b.show_id = sh.show_id
+JOIN Movie m ON sh.movie_id = m.movie_id
+GROUP BY m.movie_id, m.title
+ORDER BY total_revenue DESC;
+
+SELECT 
+    m.movie_id, 
+    m.title, 
+    b.total_revenue
+FROM 
+    Movie m
+JOIN 
+    (SELECT sh.movie_id, SUM(b.total_cost) AS total_revenue
+     FROM Booking b
+     JOIN Show1 sh ON b.show_id = sh.show_id
+     GROUP BY sh.movie_id
+    ) b ON m.movie_id = b.movie_id
+ORDER BY 
+    b.total_revenue DESC;
+
+
+#m2
+
+SELECT m.movie_id, m.title, COUNT(b.booking_id) AS
+total_bookings, AVG(r.rating) AS avg_rating
+FROM Movie m
+JOIN Show1 sh ON m.movie_id = sh.movie_id
+JOIN Booking b ON sh.show_id = b.show_id
+JOIN Review r ON m.movie_id = r.movie_id
+GROUP BY m.movie_id, m.title
+ORDER BY total_bookings DESC, avg_rating DESC;
+
+SELECT 
+    m.movie_id, 
+    m.title, 
+    b.total_bookings, 
+    r.avg_rating
+FROM 
+    Movie m
+JOIN 
+    (SELECT sh.movie_id, COUNT(b.booking_id) AS total_bookings
+     FROM Booking b
+     JOIN Show1 sh ON b.show_id = sh.show_id
+     GROUP BY sh.movie_id
+    ) b ON m.movie_id = b.movie_id
+JOIN 
+    (SELECT r.movie_id, AVG(r.rating) AS avg_rating
+     FROM Review r
+     GROUP BY r.movie_id
+    ) r ON m.movie_id = r.movie_id
+ORDER BY 
+    b.total_bookings DESC, 
+    r.avg_rating DESC;
